@@ -1,0 +1,5 @@
+{
+  "name": "claude-octopus",
+  "owner": { "name": "jiglovjopa-spec" },
+  "plugins": [{ "name": "octopus", "source": "./" }]
+}

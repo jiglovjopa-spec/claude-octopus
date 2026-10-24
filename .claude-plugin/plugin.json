@@ -1,0 +1,1 @@
+{ "name": "octopus", "version": "0.1.0", "description": "Осьминожка-аватар: ползает по своей панели и идёт туда, куда кликнешь", "types": "./types/index.d.ts" }
