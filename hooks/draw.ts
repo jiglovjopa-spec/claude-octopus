@@ -20,6 +20,129 @@ export type Scene = {
   // Рисунок откликается на мышь сам (наведение, нажатие) и форма чернил для этого
   isInteractive?: boolean
   inkSeed?: number
+  // Чем занят Claude: осьминог в очках с книжкой, с карандашом, в каске, с глобусом
+  activity?: Activity | null
+  isAsleep?: boolean
+  isHungry?: boolean
+  // Прячется: почти прозрачный под цвет фона или в ракушке
+  hide?: 'camo' | 'shell' | null
+  // Рыбка падает сверху в (x, y)
+  fish?: { x: number; y: number; isFresh: boolean } | null
+}
+
+export type Activity = 'read' | 'edit' | 'run' | 'web' | 'team'
+
+const ACTIVITY_LABEL: Record<Activity, string> = {
+  read: 'читаю…',
+  edit: 'пишу код…',
+  run: 'запускаю…',
+  web: 'ищу в сети…',
+  team: 'зову помощников…',
+}
+
+// Очки и книжка — пока Claude читает файлы
+const GLASSES =
+  `<g stroke="#2b2b2b" stroke-width="1.6" fill="#bfe3ff" fill-opacity="0.25">` +
+  `<circle cx="-11" cy="-16" r="8.8"/><circle cx="11" cy="-16" r="8.8"/>` +
+  `<path d="M-2.4 -17Q0 -19.5 2.4 -17" fill="none"/></g>`
+const BOOK =
+  `<g transform="translate(0 12) rotate(-4)">` +
+  `<path d="M-24 0L0 4L24 0L24 19L0 23L-24 19Z" fill="#3c6fb4" stroke="#1f3f6e"/>` +
+  `<path d="M-21 2.5L-1.5 6V20.5L-21 17ZM21 2.5L1.5 6V20.5L21 17Z" fill="#f6f2e4"/>` +
+  `<path d="M-18 8L-5 10M-18 11.5L-5 13.5M5 10L18 8M5 13.5L18 11.5" stroke="#b9b29a" stroke-width="0.8"/>` +
+  `<path d="M1.5 6L21 2.5V17L1.5 20.5Z" fill="#fffaf0">` +
+  `<animate attributeName="d" dur="2.6s" repeatCount="indefinite" keyTimes="0;0.8;0.9;1" values="M1.5 6L21 2.5V17L1.5 20.5Z;M1.5 6L21 2.5V17L1.5 20.5Z;M1.5 6L1 1V20L1.5 20.5Z;M1.5 6L-21 2.5V17L1.5 20.5Z"/>` +
+  `</path></g>`
+// Каска — пока запускаются команды
+const HARD_HAT =
+  `<g transform="translate(0 -64)">` +
+  `<path d="M-23 4C-23 -16 23 -16 23 4Z" fill="#f2c230" stroke="#a37d10" stroke-width="1"/>` +
+  `<rect x="-3.5" y="-13" width="7" height="15" rx="2.5" fill="#e0ad1c"/>` +
+  `<rect x="-28" y="2" width="56" height="5.5" rx="2.7" fill="#e0ad1c" stroke="#a37d10" stroke-width="1"/>` +
+  `<ellipse cx="-9" cy="-6" rx="5" ry="2.4" fill="#fff" opacity="0.45"/></g>`
+// Карандаш стучит — пока правится код
+const PENCIL =
+  `<g transform="translate(36 2)">` +
+  `<animateTransform attributeName="transform" type="rotate" additive="sum" dur="0.35s" repeatCount="indefinite" values="25;45;25"/>` +
+  `<rect x="-3.2" y="-24" width="6.4" height="30" fill="#f6c343" stroke="#9a6b12" stroke-width="0.8"/>` +
+  `<rect x="-3.2" y="-29" width="6.4" height="5.5" fill="#f08a9a" stroke="#9a6b12" stroke-width="0.8"/>` +
+  `<path d="M-3.2 6L0 14L3.2 6Z" fill="#f2d7a6" stroke="#9a6b12" stroke-width="0.6"/>` +
+  `<path d="M-1.1 11.3L0 14L1.1 11.3Z" fill="#333"/></g>`
+// Глобус крутится — пока идёт поиск в сети
+const GLOBE =
+  `<g transform="translate(40 -4)">` +
+  `<circle r="11" fill="#5ab4e8" stroke="#22628a" stroke-width="1"/>` +
+  `<path d="M-6 -5C-2 -8 2 -3 0 0C-3 3 -7 1 -6 -5ZM3 2C7 1 8 6 5 8C2 9 1 5 3 2Z" fill="#6cc46a"/>` +
+  `<ellipse rx="4" ry="11" fill="none" stroke="#22628a" stroke-width="0.8">` +
+  `<animate attributeName="rx" dur="1.6s" repeatCount="indefinite" values="11;0.5;11"/></ellipse>` +
+  `<path d="M-11 0H11" stroke="#22628a" stroke-width="0.8"/></g>`
+// Помощники — пока работают субагенты: маленькие осьминожки-пузырьки
+const TEAM =
+  `<g fill="#ff9a76" stroke="#8e2414" stroke-width="0.8">` +
+  `<g transform="translate(-44 4) scale(0.32)">${'<path d="M-27 2C-33 -30 -19 -70 0 -70C19 -70 33 -30 27 2C15 10 -15 10 -27 2Z"/>'}` +
+  `<animateTransform attributeName="transform" type="translate" additive="sum" dur="0.9s" repeatCount="indefinite" values="0 0;0 -8;0 0"/></g>` +
+  `<g transform="translate(44 4) scale(0.32)">${'<path d="M-27 2C-33 -30 -19 -70 0 -70C19 -70 33 -30 27 2C15 10 -15 10 -27 2Z"/>'}` +
+  `<animateTransform attributeName="transform" type="translate" additive="sum" dur="0.9s" begin="0.45s" repeatCount="indefinite" values="0 0;0 -8;0 0"/></g></g>`
+
+function activityProps(a: Activity) {
+  return { read: GLASSES + BOOK, edit: PENCIL, run: HARD_HAT, web: GLOBE, team: TEAM }[a]
+}
+
+function speechTag(text: string) {
+  const w = text.length * 6.4 + 14
+
+  return (
+    `<g transform="translate(26 -96)">` +
+    `<rect x="0" y="-12" width="${r(w)}" height="18" rx="9" fill="#ffffff" stroke="#9aa" stroke-width="0.8"/>` +
+    `<text x="7" y="1" font-family="Segoe UI, sans-serif" font-size="11" fill="#334">${text}</text></g>`
+  )
+}
+
+// Спит: глаза-щёлочки и улетающие «z»
+function sleepingEye(cx: number) {
+  return `<path transform="translate(${cx} -15)" d="M-6 0Q0 4.5 6 0" fill="none" stroke="#3a0d06" stroke-width="2.2" stroke-linecap="round"/>`
+}
+
+function zzz() {
+  const z = (begin: string, size: number) =>
+    `<text font-family="Segoe UI, sans-serif" font-weight="700" font-size="${size}" fill="#7a8fb0" opacity="0">z` +
+    `<animate attributeName="opacity" dur="3s" begin="${begin}" repeatCount="indefinite" values="0;1;0"/>` +
+    `<animateTransform attributeName="transform" type="translate" dur="3s" begin="${begin}" repeatCount="indefinite" values="20 -70;34 -100;50 -130"/></text>`
+
+  return z('0s', 12) + z('1s', 16) + z('2s', 20)
+}
+
+// Голодный: веки приопущены
+function hungryLid(cx: number) {
+  return `<ellipse cx="${cx}" cy="-21" rx="7.6" ry="5.2" fill="url(#skin)"/>`
+}
+
+// Ракушка, из которой выглядывают глаза
+const SHELL =
+  `<g transform="translate(0 6)">` +
+  `<path d="M-46 26C-58 -10 -30 -52 6 -50C40 -48 56 -14 44 14C36 32 10 38 -8 34Z" fill="url(#shell)" stroke="#a9744a" stroke-width="1.5"/>` +
+  `<path d="M6 -50C26 -36 28 -6 12 6C-2 16 -20 6 -18 -10C-16 -22 -2 -24 2 -14C5 -6 -4 -2 -8 -8" fill="none" stroke="#a9744a" stroke-width="2"/>` +
+  `<path d="M-40 10C-30 4 -14 6 -8 20" fill="none" stroke="#c99a6c" stroke-width="1.4"/>` +
+  `<ellipse cx="-30" cy="26" rx="18" ry="9" fill="#3b1d10"/>` +
+  `<g><animateTransform attributeName="transform" type="translate" dur="4s" repeatCount="indefinite" keyTimes="0;0.35;0.5;0.85;1" values="0 6;0 6;0 -2;0 -2;0 6"/>` +
+  `<circle cx="-36" cy="24" r="4" fill="#f7e6b0"/><circle cx="-24" cy="24" r="4" fill="#f7e6b0"/>` +
+  `<rect x="-38.5" y="23" width="5" height="2.2" rx="1" fill="#1b0f0c"/><rect x="-26.5" y="23" width="5" height="2.2" rx="1" fill="#1b0f0c"/>` +
+  `</g>` +
+  `<ellipse cx="-30" cy="31" rx="19" ry="5" fill="#d8b48a"/></g>`
+
+function fishSvg(fish: NonNullable<Scene['fish']>) {
+  const fall = fish.isFresh
+    ? `<animateTransform attributeName="transform" type="translate" dur="1s" fill="freeze" values="${r(fish.x)} -20;${r(fish.x)} ${r(fish.y)}" keySplines="0.5 0 1 1" calcMode="spline" keyTimes="0;1"/>`
+    : ''
+
+  return (
+    `<g transform="translate(${r(fish.x)} ${r(fish.y)})">${fall}` +
+    `<g><animateTransform attributeName="transform" type="rotate" dur="0.6s" repeatCount="indefinite" values="-8;8;-8"/>` +
+    `<path d="M10 0L20 -8L18 0L20 8Z" fill="#2f8fc9"/>` +
+    `<ellipse rx="12" ry="7" fill="#4fb3e8" stroke="#2a74a6" stroke-width="0.8"/>` +
+    `<path d="M-2 -6Q2 0 -2 6" fill="none" stroke="#2a74a6" stroke-width="0.8"/>` +
+    `<circle cx="-6" cy="-1.5" r="1.8" fill="#123"/></g></g>`
+  )
 }
 
 const TAU = Math.PI * 2
@@ -200,6 +323,10 @@ const DEFS =
   `</radialGradient>` +
   `<filter id="scared"><feColorMatrix type="matrix" values="0.55 0 0 0 0  0 0.5 0 0 0  0 0 0.6 0 0.02  0 0 0 1 0"/></filter>` +
   `<filter id="happy"><feColorMatrix type="matrix" values="1 0.1 0.1 0 0.03  0 0.9 0.15 0 0.05  0.05 0.1 1 0 0.12  0 0 0 1 0"/></filter>` +
+  `<radialGradient id="shell" cx="40%" cy="30%" r="80%">` +
+  `<stop offset="0" stop-color="#fff1df"/><stop offset="0.6" stop-color="#f0c9a0"/><stop offset="1" stop-color="#c98f5e"/>` +
+  `</radialGradient>` +
+  `<filter id="camo"><feColorMatrix type="saturate" values="0.15"/></filter>` +
   `<radialGradient id="shadow"><stop offset="0" stop-color="#000" stop-opacity="0.28"/><stop offset="1" stop-color="#000" stop-opacity="0"/></radialGradient>` +
   `</defs>`
 
@@ -251,17 +378,48 @@ export function octopusSvg(scene: Scene) {
     `<g transform="translate(${r(x)} ${r(y)})">${place}` +
     `<ellipse cy="52" rx="56" ry="9" fill="url(#shadow)"/>` +
     `<g transform="rotate(${r(tilt)})">` +
-    `<g${scene.isScared ? ' filter="url(#scared)"' : scene.isHappy ? ' filter="url(#happy)"' : ''}>` +
-    `<animateTransform attributeName="transform" type="translate" dur="${isMoving ? '0.8s' : scene.isHappy ? '1.1s' : '2.4s'}" repeatCount="indefinite" values="0 0;0 -3;0 0"/>` +
-    tentacles +
-    MANTLE +
-    (scene.isHappy ? happyEye(-11) + happyEye(11) : eye(-11, look, scene.isScared) + eye(11, look, scene.isScared)) +
-    `</g>` +
-    (scene.isHappy ? hearts() : scene.isBusy ? thinking() : '') +
-    (scene.isInteractive ? touchLayers(scene.inkSeed) : '') +
+    (scene.hide === 'shell' ? SHELL : body(scene, tentacles, look, isMoving)) +
     `</g></g>` +
+    (scene.fish ? fishSvg(scene.fish) : '') +
     (scene.ink === null ? '' : inkBlot(scene.ink)) +
     `</svg>`
+  )
+}
+
+function body(scene: Scene, tentacles: string, look: number, isMoving: boolean) {
+  const filter = scene.isScared ? 'scared' : scene.isHappy ? 'happy' : scene.hide === 'camo' ? 'camo' : ''
+  const eyes = scene.isHappy
+    ? happyEye(-11) + happyEye(11)
+    : scene.isAsleep
+      ? sleepingEye(-11) + sleepingEye(11)
+      : eye(-11, look, scene.isScared) + eye(11, look, scene.isScared) + (scene.isHungry ? hungryLid(-11) + hungryLid(11) : '')
+  const bob = isMoving ? '0.8s' : scene.isHappy ? '1.1s' : scene.isAsleep ? '4s' : '2.4s'
+  const camo =
+    scene.hide === 'camo'
+      ? ` opacity="0.16"><animate attributeName="opacity" dur="3s" repeatCount="indefinite" values="0.1;0.22;0.1"/`
+      : ''
+  const extras =
+    scene.hide === 'camo'
+      ? ''
+      : scene.isHappy
+        ? hearts()
+        : scene.isAsleep
+          ? zzz()
+          : scene.activity
+            ? activityProps(scene.activity) + speechTag(ACTIVITY_LABEL[scene.activity])
+            : scene.isBusy
+              ? thinking()
+              : ''
+
+  return (
+    `<g${filter === '' ? '' : ` filter="url(#${filter})"`}${camo}>` +
+    `<animateTransform attributeName="transform" type="translate" dur="${bob}" repeatCount="indefinite" values="0 0;0 -3;0 0"/>` +
+    tentacles +
+    MANTLE +
+    eyes +
+    `</g>` +
+    extras +
+    (scene.isInteractive && scene.hide !== 'camo' ? touchLayers(scene.inkSeed ?? 0) : '')
   )
 }
 

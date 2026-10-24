@@ -518,7 +518,7 @@ const Octopus: ClientModule<Props, Octo> = (props, surface) => {
         {o.tick % 10 < 5 ? '▏' : ' '}
       </Text>
       {rows}
-      <Text dimColor wrap="truncate">v0.2 · клик по мне — чернила · води мышкой — гладить · Enter — сказать</Text>
+      <Text dimColor wrap="truncate">v0.3 · клик по мне — чернила · води мышкой — гладить · Enter — сказать</Text>
     </Box>
   )
 }

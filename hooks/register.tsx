@@ -1,7 +1,8 @@
 import { atom, read, update } from 'claude-code'
 import type { EngineInterface, Register } from 'claude-code'
 
-import type { ChatLine, Mood, Move } from '../types'
+import type { ChatLine, Life, Mood, Move } from '../types'
+import type { Activity } from './draw'
 import { octopusSvg } from './draw'
 
 const PANE = 'octopus'
@@ -40,6 +41,7 @@ const PERSONA = [
 async function talk($: EngineInterface, text: string) {
   const said = text.trim()
   if (said === '' || (await read($, isThinking))) return
+  await touch($)
   const history = [...(await read($, chat)), { who: 'me' as const, text: said }].slice(-12)
   await update($, chat, () => history)
   await update($, isThinking, () => true)
@@ -50,6 +52,70 @@ async function talk($: EngineInterface, text: string) {
 
   await update($, chat, list => [...list, { who: 'octo' as const, text: answer }].slice(-12))
   await update($, isThinking, () => false)
+}
+
+// Жизнь осьминога: сытость, сон, прятки, чем занят Claude, рыбка
+const life = atom({ plugin: 'octopus', key: 'life' } as const, {
+  fedAt: 0,
+  eatenAt: 0,
+  lastActive: 0,
+  isAsleep: false,
+  activity: null,
+  errorUntil: 0,
+  hide: null,
+  hideUntil: 0,
+  fish: null,
+} as Life)
+const HUNGRY_MS = 2 * 60 * 60 * 1000
+const HIDE_MS = 20000
+
+// Какие инструменты во что одевают осьминога
+function activityOf(tool: string): Activity | null {
+  if (/^(Read|Grep|Glob|LS)$/.test(tool)) return 'read'
+  if (/^(Edit|Write|MultiEdit|NotebookEdit)$/.test(tool)) return 'edit'
+  if (/^(Bash|PowerShell)$/.test(tool)) return 'run'
+  if (/^(WebFetch|WebSearch)$/.test(tool) || /firecrawl|perplexity|search|browser|Browser/i.test(tool)) return 'web'
+  if (/^(Agent|Task|Workflow)$/.test(tool)) return 'team'
+
+  return null
+}
+
+// Любое внимание будит осьминога
+async function touch($: EngineInterface) {
+  const now = await $.clock.now()
+  await update($, life, v => (v.isAsleep || now - v.lastActive > 5000 ? { ...v, lastActive: now, isAsleep: false } : v))
+}
+
+async function feed($: EngineInterface) {
+  await touch($)
+  const now = await $.clock.now()
+  const fish = { fx: 0.2 + Math.random() * 0.6, fy: 0.4 + Math.random() * 0.45, at: now }
+  await update($, life, v => ({ ...v, fish, hide: null }))
+  // Осьминог ползёт к рыбке ртом: она у основания щупалец
+  const ms = await crawlTo($, fish.fx + 0.0001, fish.fy - 8 / size.height, false)
+  restUntil = now + ms + 8000
+  $.clock.after(Math.max(1100, ms + 200), () => {
+    void eat($, fish.at)
+  })
+}
+
+async function eat($: EngineInterface, at: number) {
+  const now = await $.clock.now()
+  await update($, life, v => (v.fish?.at === at ? { ...v, fish: null, fedAt: now, eatenAt: now } : v))
+  redrawAt($, 4000)
+}
+
+async function hideAs($: EngineInterface, kind: 'camo' | 'shell') {
+  await touch($)
+  const now = await $.clock.now()
+  const v = await read($, life)
+  const isOff = v.hide === kind
+  await update($, life, x => ({ ...x, hide: isOff ? null : kind, hideUntil: isOff ? 0 : now + HIDE_MS }))
+  if (isOff) return
+  restUntil = now + HIDE_MS
+  $.clock.after(HIDE_MS + 50, () => {
+    void update($, life, x => (x.hide === kind && x.hideUntil <= now + HIDE_MS ? { ...x, hide: null } : x))
+  })
 }
 
 // Поля, чтобы осьминог целиком помещался в панели
@@ -94,6 +160,8 @@ async function crawlTo($: EngineInterface, tx: number, ty: number, isPointed: bo
   arrival = $.clock.after(ms + 60, () => {
     void update($, move, v => (v === null ? v : { ...v, fx: v.tx, fy: v.ty, ms: 0 }))
   })
+
+  return ms
 }
 
 // Где осьминог сейчас, в долях панели
@@ -144,8 +212,16 @@ async function pointer($: EngineInterface, type: string, fx: number, fy: number)
   if (type === 'tap') await poke($)
 }
 
+// Компас: проснуться и ползти в указанную часть панели
+async function go($: EngineInterface, fx: number, fy: number) {
+  await touch($)
+  await update($, life, v => (v.hide === null ? v : { ...v, hide: null }))
+  await crawlTo($, fx, fy, true)
+}
+
 // Погладили: 3 секунды розовеет, жмурится и сидит смирно
 async function pet($: EngineInterface) {
+  await touch($)
   const now = await $.clock.now()
   const m = await read($, mood)
   if (now < m.scaredUntil) return
@@ -156,6 +232,7 @@ async function pet($: EngineInterface) {
 
 // Ткнули: чернила на 10 секунд и бегство
 async function poke($: EngineInterface) {
+  await touch($)
   const here = await position($)
   stroke = 0
   await update($, mood, () => ({
@@ -183,11 +260,21 @@ export const register: Register = on => {
     void $.ui.open({ id: PANE, title: TITLE })
     // После перезагрузки мода перерисовать уже открытую панель новым кодом
     $.ui.invalidate('ui.render')
-    $.ui.toast('🐙 Осьминожка 0.2 загружен: поболтай, погладь, ткни — будут чернила')
+    $.ui.toast('🐙 Осьминожка 0.3: корми рыбкой, прячь, смотри, как он помогает мне работать')
+    const started = await $.clock.now()
+    await update($, life, v => ({ ...v, fedAt: v.fedAt || started, lastActive: v.lastActive || started }))
 
-    // Сам по себе бродит, если его не звать
+    // Сам по себе бродит, если его не звать; заскучав — засыпает (ночью быстрее)
     $.clock.every(1500, async () => {
       const now = await $.clock.now()
+      const v = await read($, life)
+      const hour = new Date(now).getHours()
+      const sleepAfter = hour < 7 || hour >= 23 ? 60000 : 180000
+      const busy = await read($, isBusy)
+      if (!v.isAsleep && !busy && v.hide === null && v.fish === null && now - v.lastActive > sleepAfter) {
+        await update($, life, x => ({ ...x, isAsleep: true }))
+      }
+      if (v.isAsleep || v.hide !== null) return
       const m = await read($, move)
       if (m !== null && m.ms > 0 && now < m.t0 + m.ms) return
       if (now < restUntil) return
@@ -207,14 +294,32 @@ export const register: Register = on => {
   // Пока Claude работает над ответом, над осьминожкой всплывают пузырьки
   on('prompt.submit', async ($, e, next) => {
     await update($, isBusy, () => true)
+    await touch($)
 
     return next(e)
   })
 
   on('turn.complete', async ($, e, next) => {
     await update($, isBusy, () => false)
+    await update($, life, v => (v.activity === null ? v : { ...v, activity: null }))
 
     return next(e)
+  })
+
+  // Осьминог «помогает» Claude: очки и книжка, карандаш, каска, глобус; на ошибке пугается
+  on('tool.call', async ($, e, next) => {
+    const activity = activityOf(e.tool)
+    if (activity !== null) {
+      await update($, life, v => (v.activity === activity && !v.isAsleep ? v : { ...v, activity, isAsleep: false }))
+    }
+    const result = await next(e)
+    if (result.isError === true) {
+      const now = await $.clock.now()
+      await update($, life, v => ({ ...v, errorUntil: now + 2500 }))
+      redrawAt($, 2500)
+    }
+
+    return result
   })
 
   on('ui.message', async ($, e, next) => {
@@ -257,7 +362,7 @@ export const register: Register = on => {
     const { Box, Svg, Text } = $.ui.resolve(e)
     // Размер самой панели; сверху остаётся место под реплику и поле ввода
     const cols = e.props.bodyColumns ?? e.viewport?.columns ?? 40
-    const rows = (e.props.scroll?.bodyRows ?? e.viewport?.rows ?? 24) - 11
+    const rows = (e.props.scroll?.bodyRows ?? e.viewport?.rows ?? 24) - 12
     size = { width: Math.max(240, Math.round(cols * 7.8)), height: Math.max(280, Math.round(rows * 18)) }
 
     const now = await $.clock.now()
@@ -266,9 +371,11 @@ export const register: Register = on => {
     const here = m === null ? { fx: 0.5, fy: 0.6, p: 1 } : where(m, now)
     const isMoving = m !== null && m.ms > 0 && here.p < 1
     const target = isMoving && m !== null ? m : { tx: here.fx, ty: here.fy }
+    const lf = await read($, life)
     const isHappy = now < md.petUntil && now >= md.scaredUntil
-    const isScared = now < md.scaredUntil
+    const isScared = now < md.scaredUntil || now < lf.errorUntil
     const hasInk = now < md.inkUntil
+    const isHungry = lf.fedAt > 0 && now - lf.fedAt > HUNGRY_MS
 
     const lines = await read($, chat)
     const last = lines[lines.length - 1]
@@ -277,17 +384,36 @@ export const register: Register = on => {
       ? '…'
       : now - md.inkAt < 2500
         ? 'Ай! Пш-ш-ш! 💦'
-        : isHappy
-          ? 'Мур-р-р… то есть буль-буль ♥'
-          : last?.who === 'octo'
-            ? last.text
-            : 'Привет! Поболтай со мной, погладь мышкой — только не тыкай, а то брызну чернилами.'
+        : now < lf.errorUntil
+          ? 'Ой-ой, что-то пошло не так! 😱'
+          : now - lf.eatenAt < 4000
+            ? 'Ням! Вкусная рыбка, спасибо 🐟'
+            : lf.hide === 'shell'
+              ? 'Я в домике 🐚'
+              : lf.hide === 'camo'
+                ? 'Где я? Ни за что не найдёшь!'
+                : lf.fish !== null
+                  ? 'Рыбка! Плыву-плыву!'
+                  : isHappy
+                    ? 'Мур-р-р… то есть буль-буль ♥'
+                    : lf.isAsleep
+                      ? 'Хр-р… буль… (погладь или напиши — проснусь)'
+                      : isHungry
+                        ? 'Я проголодался… Покорми меня рыбкой 🐟'
+                        : last?.who === 'octo'
+                          ? last.text
+                          : 'Привет! Поболтай со мной, погладь мышкой — только не тыкай, а то брызну чернилами.'
 
     const svg = octopusSvg({
       isInteractive: e.surface !== 'mobile',
       inkSeed: Math.floor(now / 60000) % 97,
       isHappy,
       isScared,
+      isHungry,
+      isAsleep: lf.isAsleep,
+      activity: lf.activity,
+      hide: lf.hide,
+      fish: lf.fish === null ? null : { x: lf.fish.fx * size.width, y: lf.fish.fy * size.height, isFresh: now - lf.fish.at < 900 },
       ink: hasInk
         ? {
             x: md.inkX * size.width,
@@ -346,7 +472,7 @@ export const register: Register = on => {
           <Button
             key={`go-${row}-${col}`}
             label={arrow}
-            onPress={() => crawlTo($, SPOTS[col], SPOTS_Y[row], true)}
+            onPress={() => go($, SPOTS[col], SPOTS_Y[row])}
           />
         ))}
       </Box>
@@ -356,6 +482,19 @@ export const register: Register = on => {
         <Box flexDirection="column" gap={1}>
           <Button key="poke" label="👉 Ткнуть" onPress={() => poke($)} />
           <Button key="pet" label="✋ Погладить" onPress={() => pet($)} />
+          <Button key="feed" label="🐟 Покормить" onPress={() => feed($)} />
+        </Box>
+        <Box flexDirection="column" gap={1}>
+          <Button
+            key="camo"
+            label={lf.hide === 'camo' ? '🐙 Покажись' : '🫥 Маскировка'}
+            onPress={() => hideAs($, 'camo')}
+          />
+          <Button
+            key="shell"
+            label={lf.hide === 'shell' ? '🐙 Вылезай' : '🐚 В ракушку'}
+            onPress={() => hideAs($, 'shell')}
+          />
         </Box>
         <Box flexDirection="column">{compass}</Box>
       </Box>
