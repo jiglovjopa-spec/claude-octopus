@@ -9,8 +9,22 @@ export type Move = {
   isPointed: boolean
 }
 
+// Настроение осьминога: до каких моментов (мс) его гладят, он напуган и висят чернила
+export type Mood = {
+  petUntil: number
+  scaredUntil: number
+  inkUntil: number
+  inkAt: number
+  inkX: number
+  inkY: number
+  inkSeed: number
+}
+
+// Реплика в болтовне с осьминожкой
+export type ChatLine = { who: 'me' | 'octo'; text: string }
+
 declare module 'claude-code' {
   interface PluginState {
-    octopus: { isBusy: boolean; move: Move | null }
+    octopus: { isBusy: boolean; move: Move | null; chat: ChatLine[]; isThinking: boolean; mood: Mood }
   }
 }

@@ -11,6 +11,15 @@ export type Scene = {
   seconds: number
   isPointed: boolean
   isBusy: boolean
+  // Гладят: розовеет, жмурится, сердечки
+  isHappy: boolean
+  // Испугался: темнеет, зрачки щёлочкой
+  isScared: boolean
+  // Чернильное пятно: где, сколько секунд ему осталось и форма
+  ink: { x: number; y: number; seconds: number; seed: number; isFresh: boolean } | null
+  // Рисунок откликается на мышь сам (наведение, нажатие) и форма чернил для этого
+  isInteractive?: boolean
+  inkSeed?: number
 }
 
 const TAU = Math.PI * 2
@@ -94,12 +103,80 @@ function tentacle(i: number, isMoving: boolean) {
   )
 }
 
-function eye(cx: number, look: number) {
+// Довольный глаз-дужка и румянец под ним
+function happyEye(cx: number) {
+  return (
+    `<g transform="translate(${cx} -16)">` +
+    `<path d="M-6 2Q0 -7 6 2" fill="none" stroke="#3a0d06" stroke-width="2.4" stroke-linecap="round"/>` +
+    `<ellipse cx="${cx < 0 ? -3 : 3}" cy="9" rx="5.5" ry="2.6" fill="#ff7b9c" opacity="0.75"/>` +
+    `</g>`
+  )
+}
+
+function hearts() {
+  const heart = (x: number, begin: string, s: number) =>
+    `<g opacity="0"><animate attributeName="opacity" dur="1.8s" begin="${begin}" repeatCount="indefinite" values="0;1;1;0"/>` +
+    `<animateTransform attributeName="transform" type="translate" dur="1.8s" begin="${begin}" repeatCount="indefinite" values="${x} -70;${x + 6} -100;${x - 4} -128"/>` +
+    `<path transform="scale(${s})" d="M0 4C-2 0 -9 -2 -9 -7C-9 -11 -4 -12 0 -8C4 -12 9 -11 9 -7C9 -2 2 0 0 4Z" fill="#ff4f86" stroke="#c42a5c" stroke-width="0.8"/></g>`
+
+  return heart(-22, '0s', 1) + heart(8, '0.6s', 1.25) + heart(28, '1.2s', 0.9)
+}
+
+// Чернильное облако вокруг (0, 0): неровный край, брызги, блик
+function inkShape(s: number) {
+  const R = 58
+  const n = 36
+  const pts = Array.from({ length: n }, (_, k) => {
+    const a = (TAU * k) / n
+    const rr = R * (1 + 0.2 * Math.sin(3 * a + s) + 0.1 * Math.sin(7 * a + 2.3 * s) + 0.06 * Math.sin(11 * a + 0.7 * s))
+
+    return [Math.cos(a) * rr, Math.sin(a) * rr]
+  })
+  const mid = (i: number) => {
+    const [ax, ay] = pts[i % n]
+    const [bx, by] = pts[(i + 1) % n]
+
+    return `${r((ax + bx) / 2)} ${r((ay + by) / 2)}`
+  }
+  const d = `M${mid(0)}` + pts.map((_, i) => `Q${r(pts[(i + 1) % n][0])} ${r(pts[(i + 1) % n][1])} ${mid(i + 1)}`).join('') + 'Z'
+  const drops = Array.from({ length: 8 }, (_, k) => {
+    const a = s * 3.1 + k * 0.8 + Math.sin(s + k) * 0.5
+    const dd = R * (1.3 + 0.5 * Math.abs(Math.sin(s * 1.7 + k * 2.3)))
+
+    return `<circle cx="${r(Math.cos(a) * dd)}" cy="${r(Math.sin(a) * dd)}" r="${r(4 + 7 * Math.abs(Math.cos(s + k)))}"/>`
+  }).join('')
+
+  return (
+    `<path d="${d}" fill="url(#ink)" stroke="#2a2140" stroke-width="2"/>` +
+    `<g fill="#120d1c">${drops}</g>` +
+    `<ellipse cx="-20" cy="-24" rx="16" ry="8" fill="#6a6290" opacity="0.45" transform="rotate(-25 -20 -24)"/>`
+  )
+}
+
+// Чернила по кнопке: на месте осьминога, исчезают к концу срока
+function inkBlot(ink: NonNullable<Scene['ink']>) {
+  const fade = Math.max(0, ink.seconds - 1.5)
+  const pop = ink.isFresh
+    ? `<animateTransform attributeName="transform" type="scale" dur="0.3s" values="0.2;1.12;1" fill="freeze"/>`
+    : ''
+
+  return (
+    `<g transform="translate(${r(ink.x)} ${r(ink.y)})">` +
+    `<animate attributeName="opacity" begin="${r(fade)}s" dur="${r(Math.min(1.5, ink.seconds))}s" from="1" to="0" fill="freeze"/>` +
+    `<g>${pop}${inkShape(ink.seed)}</g></g>`
+  )
+}
+
+function eye(cx: number, look: number, isScared = false) {
+  const pupil = isScared
+    ? `<ellipse cx="${r(look)}" rx="1.6" ry="3.4" fill="#1b0f0c"/>`
+    : `<rect x="${r(-3.6 + look)}" y="-1.6" width="7.2" height="3.2" rx="1.6" fill="#1b0f0c"/>`
+
   return (
     `<g transform="translate(${cx} -16)">` +
     `<ellipse rx="7.2" ry="8" fill="#a8321f"/>` +
     `<ellipse rx="6" ry="6.8" fill="#fff6d8"/>` +
-    `<rect x="${r(-3.6 + look)}" y="-1.6" width="7.2" height="3.2" rx="1.6" fill="#1b0f0c"/>` +
+    pupil +
     `<circle cx="${r(-1.8 + look)}" cy="-2.6" r="1.3" fill="#fff" opacity="0.9"/>` +
     // Веко: опускается раз в несколько секунд
     `<ellipse cy="-8" rx="7.4" ry="0" fill="url(#skin)">` +
@@ -118,6 +195,11 @@ const DEFS =
   `<radialGradient id="sucker" cx="40%" cy="35%" r="70%">` +
   `<stop offset="0" stop-color="#ffe3d6"/><stop offset="0.7" stop-color="#f0a48d"/><stop offset="1" stop-color="#b8543d"/>` +
   `</radialGradient>` +
+  `<radialGradient id="ink" cx="40%" cy="35%" r="75%">` +
+  `<stop offset="0" stop-color="#2b2342"/><stop offset="0.6" stop-color="#14101f"/><stop offset="1" stop-color="#07050c"/>` +
+  `</radialGradient>` +
+  `<filter id="scared"><feColorMatrix type="matrix" values="0.55 0 0 0 0  0 0.5 0 0 0  0 0 0.6 0 0.02  0 0 0 1 0"/></filter>` +
+  `<filter id="happy"><feColorMatrix type="matrix" values="1 0.1 0.1 0 0.03  0 0.9 0.15 0 0.05  0.05 0.1 1 0 0.12  0 0 0 1 0"/></filter>` +
   `<radialGradient id="shadow"><stop offset="0" stop-color="#000" stop-opacity="0.28"/><stop offset="1" stop-color="#000" stop-opacity="0"/></radialGradient>` +
   `</defs>`
 
@@ -164,16 +246,51 @@ export function octopusSvg(scene: Scene) {
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}">` +
     DEFS +
+    (scene.isInteractive ? TOUCH_CSS : '') +
     target +
     `<g transform="translate(${r(x)} ${r(y)})">${place}` +
     `<ellipse cy="52" rx="56" ry="9" fill="url(#shadow)"/>` +
     `<g transform="rotate(${r(tilt)})">` +
-    `<g><animateTransform attributeName="transform" type="translate" dur="${isMoving ? '0.8s' : '2.4s'}" repeatCount="indefinite" values="0 0;0 -3;0 0"/>` +
+    `<g${scene.isScared ? ' filter="url(#scared)"' : scene.isHappy ? ' filter="url(#happy)"' : ''}>` +
+    `<animateTransform attributeName="transform" type="translate" dur="${isMoving ? '0.8s' : scene.isHappy ? '1.1s' : '2.4s'}" repeatCount="indefinite" values="0 0;0 -3;0 0"/>` +
     tentacles +
     MANTLE +
-    eye(-11, look) +
-    eye(11, look) +
-    (scene.isBusy ? thinking() : '') +
-    `</g></g></g></svg>`
+    (scene.isHappy ? happyEye(-11) + happyEye(11) : eye(-11, look, scene.isScared) + eye(11, look, scene.isScared)) +
+    `</g>` +
+    (scene.isHappy ? hearts() : scene.isBusy ? thinking() : '') +
+    (scene.isInteractive ? touchLayers(scene.inkSeed) : '') +
+    `</g></g>` +
+    (scene.ink === null ? '' : inkBlot(scene.ink)) +
+    `</svg>`
+  )
+}
+
+// Отклик на мышь без скриптов, одним CSS: наведение — ласка, нажатие — чернила.
+// Чернила проявляются по :active и гаснут с задержкой 8,5 с, так что держатся ~10 секунд.
+const TOUCH_CSS =
+  `<style>` +
+  `.hit{fill:#000;fill-opacity:0.001;cursor:pointer}` +
+  `.pet,.inkfx{pointer-events:none}` +
+  `.pet{opacity:0;transition:opacity .35s}` +
+  `.me:hover .pet{opacity:1}` +
+  `.me:active .pet{opacity:0;transition:opacity 0s}` +
+  `.inkfx{opacity:0;transition:opacity 1.5s ease 8.5s}` +
+  `.me:active .inkfx{opacity:1;transition:opacity 0s}` +
+  `</style>`
+
+function touchLayers(seed: number) {
+  return (
+    `<g class="me">` +
+    // Невидимая «шкурка» по контуру осьминога — по ней и ловится мышь
+    `<ellipse class="hit" cy="-28" rx="44" ry="46"/><ellipse class="hit" cy="26" rx="62" ry="32"/>` +
+    `<g class="pet" filter="url(#happy)">` +
+    `<g transform="translate(-11 -16)"><ellipse rx="7.6" ry="8.4" fill="url(#skin)"/></g>` +
+    `<g transform="translate(11 -16)"><ellipse rx="7.6" ry="8.4" fill="url(#skin)"/></g>` +
+    happyEye(-11) +
+    happyEye(11) +
+    hearts() +
+    `</g>` +
+    `<g class="inkfx" transform="translate(0 -30)">${inkShape(seed)}</g>` +
+    `</g>`
   )
 }
