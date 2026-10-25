@@ -24,8 +24,10 @@ export type Scene = {
   activity?: Activity | null
   isAsleep?: boolean
   isHungry?: boolean
-  // Прячется: почти прозрачный под цвет фона или в ракушке
-  hide?: 'camo' | 'shell' | null
+  // Прячется: почти прозрачный под цвет фона или в ракушке; glass — прилип присосками к экрану
+  hide?: 'camo' | 'shell' | 'glass' | null
+  // Только что шлёпнулся на стекло: присоски прижимаются
+  isJustStuck?: boolean
   // Рыбка падает сверху в (x, y)
   fish?: { x: number; y: number; isFresh: boolean } | null
 }
@@ -149,17 +151,21 @@ const TAU = Math.PI * 2
 const FRAMES = 8
 const STEPS = 14
 const SUCKERS = [0.22, 0.36, 0.5, 0.63, 0.75, 0.85]
+// На стекле видна вся изнанка щупальца: присосок больше
+const GLASS_SUCKERS = [0.12, 0.21, 0.3, 0.39, 0.48, 0.57, 0.66, 0.74, 0.82, 0.89]
 
 const r = (v: number) => Math.round(v * 10) / 10
 
 type Point = { x: number; y: number; nx: number; ny: number; w: number }
 
-function spine(i: number, phase: number, isMoving: boolean): Point[] {
+// На стекле щупальца раскинуты звездой (сверху промежуток под мантию), кончики
+// закручены в разные стороны и почти не шевелятся
+function spine(i: number, phase: number, isMoving: boolean, isGlass = false): Point[] {
   const side = i - 3.5
-  const a0 = (side * 22 * Math.PI) / 180
-  const length = 62 - Math.abs(side) * 3
-  const curl = Math.sign(side) * (0.6 + Math.abs(side) * 0.25)
-  const amp = isMoving ? 0.55 : 0.22
+  const a0 = (side * (isGlass ? 40 : 22) * Math.PI) / 180
+  const length = isGlass ? 60 : 62 - Math.abs(side) * 3
+  const curl = isGlass ? (i % 2 === 0 ? 1 : -1) * 0.9 : Math.sign(side) * (0.6 + Math.abs(side) * 0.25)
+  const amp = isGlass ? 0.1 : isMoving ? 0.55 : 0.22
   const step = length / STEPS
 
   let x = side * 5.2
@@ -184,7 +190,8 @@ function outline(points: Point[], inner: number, outer: number) {
   return `M${left.join('L')}L${right.reverse().join('L')}Z`
 }
 
-function at(points: Point[], s: number) {
+// Присоска на изнанке щупальца; на стекле — посередине и крупнее
+function at(points: Point[], s: number, isGlass = false) {
   const f = s * STEPS
   const k = Math.min(STEPS - 1, Math.floor(f))
   const t = f - k
@@ -192,36 +199,43 @@ function at(points: Point[], s: number) {
   const b = points[k + 1]
   const w = a.w + (b.w - a.w) * t
   const lerp = (u: number, v: number) => u + (v - u) * t
+  const shift = isGlass ? 0 : 0.55
 
   return {
-    x: lerp(a.x, b.x) - lerp(a.nx, b.nx) * w * 0.55,
-    y: lerp(a.y, b.y) - lerp(a.ny, b.ny) * w * 0.55,
-    r: Math.max(0.6, w * 0.32),
+    x: lerp(a.x, b.x) - lerp(a.nx, b.nx) * w * shift,
+    y: lerp(a.y, b.y) - lerp(a.ny, b.ny) * w * shift,
+    r: Math.max(isGlass ? 0.9 : 0.6, w * (isGlass ? 0.58 : 0.32)),
   }
 }
 
-function tentacle(i: number, isMoving: boolean) {
-  const dur = isMoving ? '0.8s' : '2.8s'
-  const frames = Array.from({ length: FRAMES + 1 }, (_, f) => spine(i, (TAU * f) / FRAMES, isMoving))
+function tentacle(i: number, isMoving: boolean, isGlass = false) {
+  const dur = isGlass ? '6s' : isMoving ? '0.8s' : '2.8s'
+  const frames = Array.from({ length: FRAMES + 1 }, (_, f) => spine(i, (TAU * f) / FRAMES, isMoving, isGlass))
   const anim = (attr: string, values: string[]) =>
     `<animate attributeName="${attr}" dur="${dur}" repeatCount="indefinite" values="${values.join(';')}"/>`
 
   const body = frames.map(p => outline(p, 1, 1))
-  const belly = frames.map(p => outline(p, 1, -0.35))
-  const suckers = SUCKERS.map(s => {
-    const spots = frames.map(p => at(p, s))
+  const belly = frames.map(p => (isGlass ? outline(p, 0.8, 0.8) : outline(p, 1, -0.35)))
+  const suckers = (isGlass ? GLASS_SUCKERS : SUCKERS).map((s, n) => {
+    const spots = frames.map(p => at(p, s, isGlass))
+    // Прижатые к стеклу присоски чуть «дышат»: то сильнее присасываются, то слабее
+    const squeeze = isGlass
+      ? `<animate attributeName="r" dur="${r(1.6 + (n % 3) * 0.4)}s" begin="${r(n * 0.23 + i * 0.11)}s" repeatCount="indefinite" values="${r(spots[0].r)};${r(spots[0].r * 0.82)};${r(spots[0].r)}"/>`
+      : ''
 
     return (
-      `<circle cx="${r(spots[0].x)}" cy="${r(spots[0].y)}" r="${r(spots[0].r)}" fill="url(#sucker)">` +
+      `<circle cx="${r(spots[0].x)}" cy="${r(spots[0].y)}" r="${r(spots[0].r)}" ` +
+      (isGlass ? `fill="url(#pressed)" stroke="#c96a55" stroke-width="0.5">` : `fill="url(#sucker)">`) +
       anim('cx', spots.map(p => `${r(p.x)}`)) +
       anim('cy', spots.map(p => `${r(p.y)}`)) +
+      squeeze +
       `</circle>`
     )
   })
 
   return (
     `<path d="${body[0]}" fill="url(#skin)" stroke="#7a1f12" stroke-width="0.6" stroke-linejoin="round">${anim('d', body)}</path>` +
-    `<path d="${belly[0]}" fill="#f6b3a0" opacity="0.85">${anim('d', belly)}</path>` +
+    `<path d="${belly[0]}" fill="#f6b3a0" opacity="${isGlass ? 0.95 : 0.85}">${anim('d', belly)}</path>` +
     suckers.join('')
   )
 }
@@ -328,6 +342,17 @@ const DEFS =
   `</radialGradient>` +
   `<filter id="camo"><feColorMatrix type="saturate" values="0.15"/></filter>` +
   `<radialGradient id="shadow"><stop offset="0" stop-color="#000" stop-opacity="0.28"/><stop offset="1" stop-color="#000" stop-opacity="0"/></radialGradient>` +
+  // Присоска, прижатая к стеклу: светлый расплющенный край и тёмная серединка
+  `<radialGradient id="pressed">` +
+  `<stop offset="0" stop-color="#9c3a28"/><stop offset="0.3" stop-color="#d9735c"/>` +
+  `<stop offset="0.55" stop-color="#ffe9df"/><stop offset="0.85" stop-color="#ffd2c2"/><stop offset="1" stop-color="#e79a84"/>` +
+  `</radialGradient>` +
+  // Блик на стекле экрана, к которому прилип осьминог
+  `<linearGradient id="glare" x1="0" y1="0" x2="1" y2="1">` +
+  `<stop offset="0.3" stop-color="#fff" stop-opacity="0"/><stop offset="0.38" stop-color="#fff" stop-opacity="0.16"/>` +
+  `<stop offset="0.44" stop-color="#fff" stop-opacity="0"/><stop offset="0.5" stop-color="#fff" stop-opacity="0.08"/>` +
+  `<stop offset="0.53" stop-color="#fff" stop-opacity="0"/>` +
+  `</linearGradient>` +
   `</defs>`
 
 const MANTLE =
@@ -368,7 +393,8 @@ export function octopusSvg(scene: Scene) {
         `<animate attributeName="opacity" dur="1.2s" repeatCount="indefinite" values="0.9;0"/></circle></g>`
       : ''
 
-  const tentacles = [0, 7, 1, 6, 2, 5, 3, 4].map(i => tentacle(i, isMoving)).join('')
+  const isGlass = scene.hide === 'glass'
+  const tentacles = [0, 7, 1, 6, 2, 5, 3, 4].map(i => tentacle(i, isMoving, isGlass)).join('')
 
   return (
     `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${width} ${height}" width="${width}" height="${height}">` +
@@ -376,13 +402,44 @@ export function octopusSvg(scene: Scene) {
     (scene.isInteractive ? TOUCH_CSS : '') +
     target +
     `<g transform="translate(${r(x)} ${r(y)})">${place}` +
-    `<ellipse cy="52" rx="56" ry="9" fill="url(#shadow)"/>` +
+    // На стекле тени на полу нет: осьминог висит прямо перед зрителем
+    (isGlass ? '' : `<ellipse cy="52" rx="56" ry="9" fill="url(#shadow)"/>`) +
     `<g transform="rotate(${r(tilt)})">` +
-    (scene.hide === 'shell' ? SHELL : body(scene, tentacles, look, isMoving)) +
+    (scene.hide === 'shell' ? SHELL : isGlass ? glassBody(scene, tentacles, look) : body(scene, tentacles, look, isMoving)) +
     `</g></g>` +
     (scene.fish ? fishSvg(scene.fish) : '') +
     (scene.ink === null ? '' : inkBlot(scene.ink)) +
+    (isGlass ? `<rect width="${width}" height="${height}" fill="url(#glare)" pointer-events="none"/>` : '') +
     `</svg>`
+  )
+}
+
+// Рот-клюв в середине звезды из щупалец: его видно только с изнанки
+const ORAL =
+  `<circle cy="4" r="12" fill="#f6b3a0" stroke="#d98a76" stroke-width="0.6"/>` +
+  `<circle cy="4" r="4.4" fill="#5a1a10"/>` +
+  `<path d="M-2.2 2.6L0 6.4L2.2 2.6Z" fill="#f2e6c8"/>`
+
+// Прилип к экрану изнутри: мантия позади, щупальца раскинуты по стеклу присосками к зрителю
+function glassBody(scene: Scene, tentacles: string, look: number) {
+  const filter = scene.isScared ? 'scared' : scene.isHappy ? 'happy' : ''
+  const eyes = scene.isHappy ? happyEye(-11) + happyEye(11) : eye(-11, look, scene.isScared) + eye(11, look, scene.isScared)
+  // Шлёп: подлетел к стеклу и расплющился
+  const splat = scene.isJustStuck
+    ? `<animateTransform attributeName="transform" type="scale" dur="0.45s" fill="freeze" values="0.7;1.22;1.08;1.12" keyTimes="0;0.45;0.75;1"/>`
+    : ''
+
+  return (
+    `<g transform="scale(1.12)">${splat}` +
+    `<g${filter === '' ? '' : ` filter="url(#${filter})"`}>` +
+    MANTLE +
+    tentacles +
+    ORAL +
+    eyes +
+    `</g>` +
+    (scene.isHappy ? hearts() : '') +
+    (scene.isInteractive ? touchLayers(scene.inkSeed ?? 0) : '') +
+    `</g>`
   )
 }
 

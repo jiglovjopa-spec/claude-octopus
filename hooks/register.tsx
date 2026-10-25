@@ -68,6 +68,14 @@ const life = atom({ plugin: 'octopus', key: 'life' } as const, {
 } as Life)
 const HUNGRY_MS = 2 * 60 * 60 * 1000
 const HIDE_MS = 20000
+const GLASS_MS = 30000
+// Как часто, заскучав, сам прилипает к экрану (доля прогулок)
+const GLASS_CHANCE = 0.12
+
+// Перестал прятаться; если висел на стекле — отлип с «чпоком»
+function unhide(v: Life, now: number): Life {
+  return v.hide === null ? v : { ...v, hide: null, unstuckAt: v.hide === 'glass' ? now : v.unstuckAt }
+}
 
 // Какие инструменты во что одевают осьминога
 function activityOf(tool: string): Activity | null {
@@ -90,7 +98,7 @@ async function feed($: EngineInterface) {
   await touch($)
   const now = await $.clock.now()
   const fish = { fx: 0.2 + Math.random() * 0.6, fy: 0.4 + Math.random() * 0.45, at: now }
-  await update($, life, v => ({ ...v, fish, hide: null }))
+  await update($, life, v => ({ ...unhide(v, now), fish }))
   // Осьминог ползёт к рыбке ртом: она у основания щупалец
   const ms = await crawlTo($, fish.fx + 0.0001, fish.fy - 8 / size.height, false)
   restUntil = now + ms + 8000
@@ -105,16 +113,31 @@ async function eat($: EngineInterface, at: number) {
   redrawAt($, 4000)
 }
 
-async function hideAs($: EngineInterface, kind: 'camo' | 'shell') {
-  await touch($)
+// Спрятаться или прилипнуть к стеклу; повторное нажатие — вылезти. Сам по себе (isSelf) не будит.
+async function hideAs($: EngineInterface, kind: 'camo' | 'shell' | 'glass', isSelf = false) {
+  if (!isSelf) await touch($)
   const now = await $.clock.now()
   const v = await read($, life)
   const isOff = v.hide === kind
-  await update($, life, x => ({ ...x, hide: isOff ? null : kind, hideUntil: isOff ? 0 : now + HIDE_MS }))
-  if (isOff) return
-  restUntil = now + HIDE_MS
-  $.clock.after(HIDE_MS + 50, () => {
-    void update($, life, x => (x.hide === kind && x.hideUntil <= now + HIDE_MS ? { ...x, hide: null } : x))
+  const ms = kind === 'glass' ? GLASS_MS : HIDE_MS
+  if (isOff) {
+    await update($, life, x => ({ ...unhide(x, now), hideUntil: 0 }))
+    redrawAt($, 2000)
+
+    return
+  }
+  if (kind === 'glass') {
+    // Прилипает там, где сейчас: дальше не ползёт
+    const here = await position($)
+    arrival?.cancel()
+    await update($, move, m => (m === null ? m : { ...m, fx: here.fx, fy: here.fy, tx: here.fx, ty: here.fy, ms: 0 }))
+  }
+  await update($, life, x => ({ ...x, hide: kind, hideUntil: now + ms }))
+  restUntil = now + ms
+  $.clock.after(ms + 50, async () => {
+    const at = await $.clock.now()
+    void update($, life, x => (x.hide === kind && x.hideUntil <= now + ms ? unhide(x, at) : x))
+    redrawAt($, 2000)
   })
 }
 
@@ -215,7 +238,8 @@ async function pointer($: EngineInterface, type: string, fx: number, fy: number)
 // Компас: проснуться и ползти в указанную часть панели
 async function go($: EngineInterface, fx: number, fy: number) {
   await touch($)
-  await update($, life, v => (v.hide === null ? v : { ...v, hide: null }))
+  const now = await $.clock.now()
+  await update($, life, v => unhide(v, now))
   await crawlTo($, fx, fy, true)
 }
 
@@ -235,6 +259,8 @@ async function poke($: EngineInterface) {
   await touch($)
   const here = await position($)
   stroke = 0
+  // Ткнули, пока висел на стекле, — отлипает с «чпоком» и удирает
+  await update($, life, v => (v.hide === 'glass' ? unhide(v, here.now) : v))
   await update($, mood, () => ({
     petUntil: 0,
     scaredUntil: here.now + 3000,
@@ -260,7 +286,7 @@ export const register: Register = on => {
     void $.ui.open({ id: PANE, title: TITLE })
     // После перезагрузки мода перерисовать уже открытую панель новым кодом
     $.ui.invalidate('ui.render')
-    $.ui.toast('🐙 Осьминожка 0.3: корми рыбкой, прячь, смотри, как он помогает мне работать')
+    $.ui.toast('🐙 Осьминожка 0.4: теперь прилипает присосками к экрану 🫧')
     const started = await $.clock.now()
     await update($, life, v => ({ ...v, fedAt: v.fedAt || started, lastActive: v.lastActive || started }))
 
@@ -278,6 +304,12 @@ export const register: Register = on => {
       const m = await read($, move)
       if (m !== null && m.ms > 0 && now < m.t0 + m.ms) return
       if (now < restUntil) return
+      // Иногда вместо прогулки прилипает присосками к экрану
+      if (Math.random() < GLASS_CHANCE) {
+        await hideAs($, 'glass', true)
+
+        return
+      }
       await crawlTo($, Math.random(), Math.random(), false)
     })
 
@@ -388,6 +420,10 @@ export const register: Register = on => {
           ? 'Ой-ой, что-то пошло не так! 😱'
           : now - lf.eatenAt < 4000
             ? 'Ням! Вкусная рыбка, спасибо 🐟'
+            : now - (lf.unstuckAt ?? 0) < 2000
+              ? 'Чпок! 💋'
+            : lf.hide === 'glass'
+              ? 'Прилип! Смотри, какие у меня присоски 🫧'
             : lf.hide === 'shell'
               ? 'Я в домике 🐚'
               : lf.hide === 'camo'
@@ -413,6 +449,7 @@ export const register: Register = on => {
       isAsleep: lf.isAsleep,
       activity: lf.activity,
       hide: lf.hide,
+      isJustStuck: lf.hide === 'glass' && now - (lf.hideUntil - GLASS_MS) < 500,
       fish: lf.fish === null ? null : { x: lf.fish.fx * size.width, y: lf.fish.fy * size.height, isFresh: now - lf.fish.at < 900 },
       ink: hasInk
         ? {
@@ -425,8 +462,9 @@ export const register: Register = on => {
         : null,
       width: size.width,
       height: size.height,
-      x: clampX(here.fx) * size.width,
-      y: clampY(here.fy) * size.height,
+      // На стекле щупальца раскинуты шире — держим его подальше от краёв панели
+      x: lf.hide === 'glass' ? Math.min(Math.max(clampX(here.fx) * size.width, 92), size.width - 92) : clampX(here.fx) * size.width,
+      y: lf.hide === 'glass' ? Math.min(Math.max(clampY(here.fy) * size.height, 100), size.height - 90) : clampY(here.fy) * size.height,
       tx: target.tx * size.width,
       ty: target.ty * size.height,
       seconds: isMoving && m !== null ? (m.ms * (1 - here.p)) / 1000 : 0,
@@ -494,6 +532,11 @@ export const register: Register = on => {
             key="shell"
             label={lf.hide === 'shell' ? '🐙 Вылезай' : '🐚 В ракушку'}
             onPress={() => hideAs($, 'shell')}
+          />
+          <Button
+            key="glass"
+            label={lf.hide === 'glass' ? '🐙 Отлипни' : '🫧 Прилипнуть'}
+            onPress={() => hideAs($, 'glass')}
           />
         </Box>
         <Box flexDirection="column">{compass}</Box>

@@ -21,7 +21,8 @@ export type Mood = {
 }
 
 // Жизнь осьминога: когда ел, когда его последний раз трогали, спит ли, чем занят Claude,
-// прячется ли и куда упала рыбка (моменты — мс эпохи, места — доли панели)
+// прячется ли (или прилип к стеклу экрана, glass), когда отлип и куда упала рыбка
+// (моменты — мс эпохи, места — доли панели)
 export type Life = {
   fedAt: number
   eatenAt: number
@@ -29,8 +30,9 @@ export type Life = {
   isAsleep: boolean
   activity: 'read' | 'edit' | 'run' | 'web' | 'team' | null
   errorUntil: number
-  hide: 'camo' | 'shell' | null
+  hide: 'camo' | 'shell' | 'glass' | null
   hideUntil: number
+  unstuckAt?: number
   fish: { fx: number; fy: number; at: number } | null
 }
 

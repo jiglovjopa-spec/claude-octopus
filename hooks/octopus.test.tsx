@@ -137,3 +137,31 @@ test('на десктопе: рыбка, очки за чтением, раку�
   expect(await ui.find({ type: 'Text', text: /не найдёшь/ })).toBeTruthy()
   await ui.unmount()
 })
+
+test('на десктопе: прилипает присосками к экрану и отлипает с чпоком', async ($, on) => {
+  on('command.register', () => ({ value: { command: 'octopus' } }))
+  on('ui.open', () => ({ value: { isPlaced: true } }))
+  on('session.start', (_, e) => ({ cwd: e.cwd }))
+  on('clock.every', () => ({ deny: 'осьминог сидит на месте' }))
+  on('clock.now', () => ({ value: 1_800_000_000_000 }))
+  on('clock.after', () => ({ deny: 'таймеры не срабатывают' }))
+  on('ui.toast', () => ({ value: undefined }))
+
+  await $.session.start({ cwd: '/', surface: 'desktop', isInteractive: true })
+  const ui = await $.ui.mount({ ...PANE, surface: 'desktop' })
+  const svg = async () => String((await ui.find({ type: 'Svg' }))?.props.source)
+
+  await ui.press({ key: 'glass' })
+  expect(await ui.find({ type: 'Text', text: /Прилип/ })).toBeTruthy()
+  const stuck = await svg()
+  expect(stuck.includes('url(#pressed)')).toBe(true)
+  expect(stuck.includes('url(#glare)')).toBe(true)
+  expect(stuck.includes('url(#shadow)"/>')).toBe(false)
+  // 8 щупалец по 10 присосок
+  expect(stuck.split('fill="url(#pressed)"').length - 1).toBe(80)
+
+  await ui.press({ key: 'glass' })
+  expect(await ui.find({ type: 'Text', text: /Чпок/ })).toBeTruthy()
+  expect((await svg()).includes('url(#pressed)"')).toBe(false)
+  await ui.unmount()
+})
